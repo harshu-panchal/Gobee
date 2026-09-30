@@ -1,0 +1,111 @@
+import crypto from 'crypto';
+
+const DEFAULT_OTP = '123456';
+
+const isDefaultOtpEnabled = () => {
+  const flag = String(process.env.USE_DEFAULT_OTP || '').trim().toLowerCase();
+  if (flag === 'true' || flag === '1' || flag === 'yes') return true;
+  const env = String(process.env.NODE_ENV || 'development').trim().toLowerCase();
+  return env !== 'production';
+};
+
+const normalizeOtp = (otp) => String(otp ?? '').replace(/\D/g, '');
+
+/**
+ * Generate a 6-digit OTP
+ */
+const generateOTP = () => {
+  if (isDefaultOtpEnabled()) {
+    return DEFAULT_OTP;
+  }
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+/**
+ * Hash OTP using SHA-256
+ */
+const hashOTP = (otp) => {
+  return crypto.createHash('sha256').update(String(otp)).digest('hex');
+};
+
+// In-memory OTP store (fallback when Redis is not available)
+const otpStore = new Map();
+const rateLimitStore = new Map();
+
+/**
+ * Store OTP (in-memory fallback)
+ */
+const storeOTP = async (phone, otpHash) => {
+  otpStore.set(phone, { hash: otpHash, createdAt: Date.now(), attempts: 0 });
+  // Auto-expire after 10 minutes
+  setTimeout(() => otpStore.delete(phone), 10 * 60 * 1000);
+};
+
+/**
+ * Verify OTP
+ */
+const verifyOTP = async (phone, otp) => {
+  const normalized = normalizeOtp(otp);
+
+  // Default OTP bypass for development
+  if (isDefaultOtpEnabled() && normalized === DEFAULT_OTP) {
+    otpStore.delete(phone);
+    return { success: true };
+  }
+
+  const stored = otpStore.get(phone);
+  if (!stored) {
+    return { success: false, message: 'OTP expired or not found. Please request a new one.' };
+  }
+
+  // Check attempts
+  if (stored.attempts >= 5) {
+    otpStore.delete(phone);
+    return { success: false, message: 'Maximum attempts exceeded. Please request a new OTP.' };
+  }
+
+  // Check expiry (10 minutes)
+  if (Date.now() - stored.createdAt > 10 * 60 * 1000) {
+    otpStore.delete(phone);
+    return { success: false, message: 'OTP has expired. Please request a new one.' };
+  }
+
+  const otpHash = hashOTP(normalized);
+  if (otpHash !== stored.hash) {
+    stored.attempts += 1;
+    return { success: false, message: 'Invalid OTP' };
+  }
+
+  // OTP verified - remove it
+  otpStore.delete(phone);
+  return { success: true };
+};
+
+/**
+ * Check rate limit (max 5 OTP requests per 10 minutes)
+ */
+const checkRateLimit = async (phone) => {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  const maxRequests = 5;
+
+  const record = rateLimitStore.get(phone);
+  if (!record) {
+    rateLimitStore.set(phone, { count: 1, firstRequest: now });
+    return true;
+  }
+
+  if (now - record.firstRequest > windowMs) {
+    rateLimitStore.set(phone, { count: 1, firstRequest: now });
+    return true;
+  }
+
+  if (record.count >= maxRequests) {
+    return false;
+  }
+
+  record.count += 1;
+  return true;
+};
+
+export { generateOTP, hashOTP, storeOTP, verifyOTP, checkRateLimit };

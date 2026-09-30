@@ -1,0 +1,116 @@
+import mongoose from 'mongoose';
+import serviceDb from '../config/db.js';
+
+const spHomeContentSchema = new mongoose.Schema({
+  cityId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCity', default: null, index: true },
+  banners: [{
+    imageUrl: { type: String, default: '' },
+    text: { type: String, default: '' },
+    targetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+    slug: { type: String, default: '' },
+    order: { type: Number, default: 0 }
+  }],
+  promos: [{
+    title: { type: String, default: '' },
+    subtitle: { type: String, default: '' },
+    buttonText: { type: String, default: 'Explore' },
+    gradientClass: { type: String, default: 'from-blue-600 to-blue-800' },
+    imageUrl: { type: String, default: '' },
+    targetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+    slug: { type: String, default: '' },
+    order: { type: Number, default: 0 }
+  }],
+  curated: [{
+    title: { type: String, default: '' },
+    gifUrl: { type: String, default: '' },
+    youtubeUrl: { type: String, default: '' },
+    order: { type: Number, default: 0 }
+  }],
+  noteworthy: [{
+    title: { type: String, default: '' },
+    imageUrl: { type: String, default: '' },
+    targetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+    slug: { type: String, default: '' },
+    order: { type: Number, default: 0 }
+  }],
+  booked: [{
+    title: { type: String, default: '' },
+    rating: { type: String, default: '' },
+    reviews: { type: String, default: '' },
+    price: { type: String, default: '' },
+    originalPrice: { type: String, default: '' },
+    discount: { type: String, default: '' },
+    imageUrl: { type: String, default: '' },
+    targetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+    slug: { type: String, default: '' },
+    order: { type: Number, default: 0 }
+  }],
+  categorySections: [{
+    title: { type: String, required: true },
+    seeAllTargetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+    seeAllSlug: { type: String, default: '' },
+    cards: [{
+      title: String, imageUrl: String, badge: String, price: String,
+      originalPrice: String, discount: String, rating: String, reviews: String,
+      targetCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SpCategory', default: null },
+      slug: { type: String, default: '' }
+    }],
+    order: { type: Number, default: 0 }
+  }],
+  isActive: { type: Boolean, default: true },
+  isBannersVisible: { type: Boolean, default: true },
+  isPromosVisible: { type: Boolean, default: true },
+  isCuratedVisible: { type: Boolean, default: true },
+  isNoteworthyVisible: { type: Boolean, default: true },
+  isBookedVisible: { type: Boolean, default: true },
+  isCategorySectionsVisible: { type: Boolean, default: true },
+  isCategoriesVisible: { type: Boolean, default: true },
+  
+  // Dynamic Scrap Promotion
+  isScrapPromoVisible: { type: Boolean, default: true },
+  scrapPromo: {
+    title: { type: String, default: "Turn Your Scrap into Instant Cash" },
+    subtitle: { type: String, default: "Accepting paper, plastic, metal, and electronics at best prices. We pick up directly from your doorstep." },
+    buttonText: { type: String, default: "Sell Scrap Now" },
+    route: { type: String, default: "/sp/user/scrap" }
+  },
+
+  // Dynamic Refer & Earn
+  isReferEarnVisible: { type: Boolean, default: true },
+  referEarn: {
+    title: { type: String, default: "Refer & Earn" },
+    subtitle: { type: String, default: "Invite your friends and earn rewards" },
+    buttonText: { type: String, default: "Invite Now" }
+  }
+}, { timestamps: true });
+
+spHomeContentSchema.statics.getHomeContent = async function (cityId = null) {
+  let homeContent = null;
+
+  if (cityId) {
+    homeContent = await this.findOne({ cityId, isActive: { $ne: false } }).sort({ updatedAt: -1 });
+  }
+
+  // Global / default content (cityId null or missing)
+  if (!homeContent) {
+    homeContent = await this.findOne({
+      $and: [
+        { isActive: { $ne: false } },
+        { $or: [{ cityId: null }, { cityId: { $exists: false } }] }
+      ]
+    }).sort({ updatedAt: -1 });
+  }
+
+  // Last resort: any active home content in Service DB
+  if (!homeContent) {
+    homeContent = await this.findOne({ isActive: { $ne: false } }).sort({ updatedAt: -1 });
+  }
+
+  if (!homeContent) {
+    homeContent = await this.create({ cityId: cityId || null });
+  }
+
+  return homeContent;
+};
+
+export default serviceDb.model('SpHomeContent', spHomeContentSchema, 'homecontents');

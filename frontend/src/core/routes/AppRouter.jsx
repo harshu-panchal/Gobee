@@ -1,0 +1,227 @@
+import React, { lazy, useMemo, Suspense } from 'react';
+import { createBrowserRouter, RouterProvider, Outlet, Navigate, useLocation } from 'react-router-dom';
+import ProtectedRoute from '../guards/ProtectedRoute';
+import RoleGuard from '../guards/RoleGuard';
+import { UserRole } from '../constants/roles';
+import RootErrorBoundary from '../../shared/components/RootErrorBoundary';
+
+const RedirectToSP = () => {
+    const location = useLocation();
+    const target = `/sp${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={target} replace />;
+};
+
+// Providers for Customer Module
+import { WishlistProvider } from '../../modules/customer/context/WishlistContext';
+import { CartProvider } from '../../modules/customer/context/CartContext';
+import { CartAnimationProvider } from '../../modules/customer/context/CartAnimationContext';
+import { ProductDetailProvider } from '../../modules/customer/context/ProductDetailContext';
+import { LocationProvider } from '../../modules/customer/context/LocationContext';
+import ScrollToTop from '../../modules/customer/components/shared/ScrollToTop';
+
+// Public Pages
+import Auth from '../../modules/seller/pages/Auth';
+import ApplicationPending from '../../modules/seller/pages/ApplicationPending';
+import AdminAuth from '../../modules/admin/pages/AdminAuth';
+import DeliveryAuth from '../../modules/delivery/pages/DeliveryAuth';
+import CustomerAuth from '../../modules/customer/pages/CustomerAuth';
+import LegalContentPage from '../../shared/pages/LegalContentPage';
+
+// Customer Pages (lazy-loaded)
+const Home = lazy(() => import('../../modules/customer/pages/Home'));
+const CategoriesPage = lazy(() => import('../../modules/customer/pages/CategoriesPage'));
+const CategoryProductsPage = lazy(() => import('../../modules/customer/pages/CategoryProductsPage'));
+const WishlistPage = lazy(() => import('../../modules/customer/pages/WishlistPage'));
+const OffersPage = lazy(() => import('../../modules/customer/pages/OffersPage'));
+const ShopByStorePage = lazy(() => import('../../modules/customer/pages/ShopByStorePage'));
+const ProfilePage = lazy(() => import('../../modules/customer/pages/ProfilePage'));
+const OrdersPage = lazy(() => import('../../modules/customer/pages/OrdersPage'));
+const OrderTransactionsPage = lazy(() => import('../../modules/customer/pages/OrderTransactionsPage'));
+const AddressesPage = lazy(() => import('../../modules/customer/pages/AddressesPage'));
+const SettingsPage = lazy(() => import('../../modules/customer/pages/SettingsPage'));
+const SupportPage = lazy(() => import('../../modules/customer/pages/SupportPage'));
+const ChatPage = lazy(() => import('../../modules/customer/pages/ChatPage'));
+const TermsPage = lazy(() => import('../../modules/customer/pages/TermsPage'));
+const AboutPage = lazy(() => import('../../modules/customer/pages/AboutPage'));
+const EditProfilePage = lazy(() => import('../../modules/customer/pages/EditProfilePage'));
+const OrderDetailPage = lazy(() => import('../../modules/customer/pages/OrderDetailPage'));
+const ProductDetailPage = lazy(() => import('../../modules/customer/pages/ProductDetailPage'));
+const CheckoutPage = lazy(() => import('../../modules/customer/pages/CheckoutPage'));
+const PaymentStatusPage = lazy(() => import('../../modules/customer/pages/PaymentStatusPage'));
+const SearchPage = lazy(() => import('../../modules/customer/pages/SearchPage'));
+const WalletPage = lazy(() => import('../../modules/customer/pages/WalletPage'));
+const PrintStore = lazy(() => import('../../modules/customer/pages/PrintStore'));
+
+// Lazy load heavy modules
+const SellerModule = lazy(() => import('../../modules/seller/routes/index'));
+const AdminModule = lazy(() => import('../../modules/admin/routes/index'));
+const DeliveryModule = lazy(() => import('../../modules/delivery/routes/index'));
+
+// Service Provider Module (lazy-loaded)
+const ServiceProviderModule = lazy(() => import('../../modules/serviceProvider/routes/index'));
+
+import CustomerLayout from '../../modules/customer/components/layout/CustomerLayout';
+
+const CustomerLayoutWrapper = () => (
+    <WishlistProvider>
+        <CartProvider>
+            <CartAnimationProvider>
+                <ScrollToTop />
+                <CustomerLayout>
+                    <Suspense fallback={<div className="flex h-screen items-center justify-center font-outfit">Loading...</div>}>
+                        <Outlet />
+                    </Suspense>
+                </CustomerLayout>
+            </CartAnimationProvider>
+        </CartProvider>
+    </WishlistProvider>
+);
+
+const GlobalProvidersWrapper = () => (
+    <LocationProvider>
+        <ProductDetailProvider>
+            <Outlet />
+        </ProductDetailProvider>
+    </LocationProvider>
+);
+
+const AppRouter = () => {
+    const router = useMemo(() => createBrowserRouter([
+        {
+            path: '/',
+            element: <GlobalProvidersWrapper />,
+            errorElement: <RootErrorBoundary />,
+            children: [
+                {
+                    path: 'login',
+                    element: <CustomerAuth />,
+                },
+                {
+                    path: 'signup',
+                    element: <CustomerAuth />,
+                },
+                {
+                    path: 'seller/auth',
+                    element: <Auth />,
+                },
+                {
+                    path: 'seller/pending-approval',
+                    element: <ApplicationPending />,
+                },
+                {
+                    path: 'admin/auth',
+                    element: <AdminAuth />,
+                },
+                {
+                    path: 'delivery/auth',
+                    element: <DeliveryAuth />,
+                },
+                {
+                    path: 'privacy-policy/:panel',
+                    element: <LegalContentPage type="privacy" />,
+                },
+                {
+                    path: 'support/:panel',
+                    element: <LegalContentPage type="support" />,
+                },
+                {
+                    path: 'seller/*',
+                    element: (
+                        <ProtectedRoute>
+                            <RoleGuard allowedRoles={[UserRole.SELLER]}>
+                                <SellerModule />
+                            </RoleGuard>
+                        </ProtectedRoute>
+                    ),
+                },
+                {
+                    path: 'admin/*',
+                    element: (
+                        <ProtectedRoute>
+                            <RoleGuard allowedRoles={[UserRole.ADMIN]}>
+                                <AdminModule />
+                            </RoleGuard>
+                        </ProtectedRoute>
+                    ),
+                },
+                {
+                    path: 'delivery/*',
+                    element: (
+                        <ProtectedRoute>
+                            <RoleGuard allowedRoles={[UserRole.DELIVERY]}>
+                                <DeliveryModule />
+                            </RoleGuard>
+                        </ProtectedRoute>
+                    ),
+                },
+                {
+                    path: 'sp/*',
+                    element: (
+                        <Suspense fallback={<div className="flex h-screen items-center justify-center font-outfit">Loading...</div>}>
+                            <ServiceProviderModule />
+                        </Suspense>
+                    ),
+                },
+                {
+                    path: 'unauthorized',
+                    element: <div className="flex h-screen items-center justify-center font-outfit">Unauthorized Access</div>,
+                },
+                {
+                    path: 'payment-status',
+                    element: <PaymentStatusPage />,
+                },
+                {
+                    element: <CustomerLayoutWrapper />,
+                    children: [
+                        { index: true, element: <Home /> },
+                        { path: 'categories', element: <CategoriesPage /> },
+                        { path: 'category/:categoryName', element: <CategoryProductsPage /> },
+                        { path: 'product/:id', element: <ProductDetailPage /> },
+                        { path: 'terms', element: <TermsPage /> },
+                        { path: 'about', element: <AboutPage /> },
+                        { path: 'offers', element: <OffersPage /> },
+                        { path: 'shop-by-store', element: <ShopByStorePage /> },
+                        { path: 'wishlist', element: <ProtectedRoute><WishlistPage /></ProtectedRoute> },
+                        { path: 'orders', element: <ProtectedRoute><OrdersPage /></ProtectedRoute> },
+                        { path: 'orders/:orderId', element: <ProtectedRoute><OrderDetailPage /></ProtectedRoute> },
+                        { path: 'transactions', element: <ProtectedRoute><OrderTransactionsPage /></ProtectedRoute> },
+                        { path: 'addresses', element: <ProtectedRoute><AddressesPage /></ProtectedRoute> },
+                        { path: 'settings', element: <ProtectedRoute><SettingsPage /></ProtectedRoute> },
+                        { path: 'support', element: <ProtectedRoute><SupportPage /></ProtectedRoute> },
+                        { path: 'chat', element: <ProtectedRoute><ChatPage /></ProtectedRoute> },
+                        { path: 'checkout', element: <ProtectedRoute><CheckoutPage /></ProtectedRoute> },
+                        { path: 'profile', element: <ProtectedRoute><ProfilePage /></ProtectedRoute> },
+                        { path: 'profile/edit', element: <ProtectedRoute><EditProfilePage /></ProtectedRoute> },
+                        { path: 'wallet', element: <ProtectedRoute><WalletPage /></ProtectedRoute> },
+                        { path: 'search', element: <SearchPage /> },
+                        { path: 'print-store', element: <ProtectedRoute><PrintStore /></ProtectedRoute> },
+                    ]
+                },
+                {
+                    path: 'user/*',
+                    element: <RedirectToSP />
+                },
+                {
+                    path: 'worker/*',
+                    element: <RedirectToSP />
+                },
+                {
+                    path: 'vendor/*',
+                    element: <RedirectToSP />
+                },
+                {
+                    path: 'admin/*',
+                    element: <RedirectToSP />
+                },
+                {
+                    path: '*',
+                    element: <Navigate to="/" replace />
+                }
+            ]
+        }
+    ]), []);
+
+    return <RouterProvider router={router} />;
+};
+
+export default AppRouter;

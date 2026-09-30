@@ -1,0 +1,402 @@
+import Seller from "../models/seller.js";
+import jwt from "jsonwebtoken";
+import handleResponse from "../utils/helper.js";
+import {
+    issueSellerVerificationOtp,
+    verifySellerOtpCode,
+    verifySellerVerificationToken,
+} from "../services/sellerVerificationService.js";
+import { uploadToCloudinary } from "../services/mediaService.js";
+
+/* ===============================
+   Utils
+================================ */
+
+const generateToken = (seller) =>
+    jwt.sign({ id: seller._id, role: "seller" }, process.env.JWT_SECRET, {
+        expiresIn: "365d",
+    });
+
+const SELLER_DOCUMENT_FIELDS = {
+    tradeLicense: "Trade License",
+    gstCertificate: "GST Certificate",
+    idProof: "ID Proof",
+};
+
+const REQUIRED_SELLER_DOCUMENT_FIELDS = Object.keys(SELLER_DOCUMENT_FIELDS);
+
+const parseDocumentsPayload = (documents) => {
+    if (!documents) {
+        return {};
+    }
+
+    if (typeof documents === "string") {
+        try {
+            return JSON.parse(documents);
+        } catch {
+            return {};
+        }
+    }
+
+    if (typeof documents === "object") {
+        return documents;
+    }
+
+    return {};
+};
+
+const isValidUploadedDocumentReference = (value) => {
+    const normalized = String(value || "").trim();
+    return /^https?:\/\//i.test(normalized);
+};
+
+const resolveSellerDocuments = (body = {}, parsedDocuments = {}) => {
+    const resolved = { ...(parsedDocuments || {}) };
+
+    const directFields = {
+        tradeLicense: body.tradeLicenseUrl || body.tradeLicense,
+        gstCertificate: body.gstCertificateUrl || body.gstCertificate,
+        idProof: body.idProofUrl || body.idProof,
+    };
+
+    for (const [field, candidate] of Object.entries(directFields)) {
+        const normalized = String(candidate || "").trim();
+        if (normalized && /^https?:\/\//i.test(normalized)) {
+            resolved[field] = normalized;
+        }
+    }
+
+    return resolved;
+};
+
+const getMissingRequiredSellerDocuments = (documents = {}) =>
+    REQUIRED_SELLER_DOCUMENT_FIELDS.filter(
+        (fieldName) => !isValidUploadedDocumentReference(documents[fieldName]),
+    );
+
+/* ===============================
+   SELLER SIGNUP
+================================ */
+export const signupSeller = async (req, res) => {
+    try {
+        const {
+            name,
+            email,
+            phone,
+            password,
+            emailVerificationToken,
+            phoneVerificationToken,
+            shopName,
+            category,
+            description,
+            address,
+            locality,
+            pincode,
+            city,
+            state,
+            documents,
+            lat,
+            lng,
+            radius
+        } = req.body || {};
+
+        // 1. Handle file uploads if they exist in req.files
+        const uploadedDocs = {};
+        if (req.files) {
+            const files = Array.isArray(req.files)
+                ? req.files
+                : Object.values(req.files).flat();
+
+            for (const file of files) {
+                const fieldName = file.fieldname;
+                if (fieldName && REQUIRED_SELLER_DOCUMENT_FIELDS.includes(fieldName)) {
+                    try {
+                        const result = await uploadToCloudinary(file.buffer, "docs", {
+                            mimeType: file.mimetype,
+                        });
+                        if (result && result.secure_url) {
+                            uploadedDocs[fieldName] = result.secure_url;
+                        }
+                    } catch (err) {
+                        console.error(`Failed to upload ${fieldName} to Cloudinary:`, err);
+                        throw err; // Re-throw to be caught by the outer catch block
+                    }
+                }
+            }
+        }
+
+        // Merge uploaded document URLs into body for resolveSellerDocuments
+        const augmentedBody = {
+            ...req.body,
+            ...uploadedDocs
+        };
+
+        const parsedLat = lat !== undefined ? Number(lat) : undefined;
+        const parsedLng = lng !== undefined ? Number(lng) : undefined;
+        const parsedRadius = radius !== undefined ? Number(radius) : undefined;
+
+        if (!name || !email || !phone || !password || !shopName) {
+            return handleResponse(res, 400, "All fields are required");
+        }
+
+        verifySellerVerificationToken({
+            channel: "email",
+            rawValue: email,
+            token: emailVerificationToken,
+        });
+        verifySellerVerificationToken({
+            channel: "phone",
+            rawValue: phone,
+            token: phoneVerificationToken,
+        });
+
+        // Validate coordinates and radius if provided
+        if (lat !== undefined && (!Number.isFinite(parsedLat) || parsedLat < -90 || parsedLat > 90)) {
+            return handleResponse(res, 400, "Invalid latitude");
+        }
+        if (lng !== undefined && (!Number.isFinite(parsedLng) || parsedLng < -180 || parsedLng > 180)) {
+            return handleResponse(res, 400, "Invalid longitude");
+        }
+        if (radius !== undefined && (!Number.isFinite(parsedRadius) || parsedRadius < 1 || parsedRadius > 100)) {
+            return handleResponse(res, 400, "Radius must be between 1 and 100 km");
+        }
+
+        let seller = await Seller.findOne({ $or: [{ email }, { phone }] });
+
+        if (seller) {
+            return handleResponse(res, 400, "Seller with this email or phone already exists");
+        }
+
+        const parsedDocuments = parseDocumentsPayload(documents);
+        const sellerDocuments = resolveSellerDocuments(augmentedBody, parsedDocuments);
+        const missingRequiredDocuments = getMissingRequiredSellerDocuments(
+            sellerDocuments || {}
+        );
+
+        if (missingRequiredDocuments.length > 0) {
+            const readableMissing = missingRequiredDocuments
+                .map((field) => SELLER_DOCUMENT_FIELDS[field] || field)
+                .join(", ");
+
+            // Debugging: If files were sent but didn't result in URLs, mention it
+            const filesReceived = req.files ? (Array.isArray(req.files) ? req.files.length : Object.keys(req.files).length) : 0;
+            const detail = filesReceived > 0
+                ? ". Documents were received but failed to upload correctly."
+                : ". No documents were detected in the request.";
+
+            return handleResponse(
+                res,
+                400,
+                `All required documents must be uploaded: ${readableMissing}${detail}`
+            );
+        }
+
+        const sellerData = {
+            name,
+            email,
+            phone,
+            password,
+            shopName,
+            category,
+            description,
+            address,
+            locality,
+            pincode,
+            city,
+            state,
+            documents: sellerDocuments,
+            applicationStatus: "pending",
+            isVerified: false,
+            emailVerified: true,
+            phoneVerified: true,
+            isActive: false,
+        };
+
+        if (parsedLat !== undefined && parsedLng !== undefined) {
+            sellerData.location = {
+                type: "Point",
+                coordinates: [parsedLng, parsedLat],
+            };
+        }
+
+        if (parsedRadius !== undefined) {
+            sellerData.serviceRadius = parsedRadius;
+        }
+
+        seller = await Seller.create(sellerData);
+
+        return handleResponse(res, 201, "Seller registered successfully", {
+            seller,
+            applicationStatus: "pending",
+            requiresApproval: true,
+        });
+    } catch (error) {
+        return handleResponse(res, 500, error.message);
+    }
+};
+
+export const sendSellerSignupOtp = async (req, res) => {
+    try {
+        const { channel, email, phone, value } = req.body || {};
+        const targetValue =
+            channel === "email"
+                ? email || value
+                : channel === "phone"
+                    ? phone || value
+                    : value;
+
+        const result = await issueSellerVerificationOtp({
+            channel,
+            rawValue: targetValue,
+            ipAddress: req.ip,
+        });
+
+        return handleResponse(res, 200, "OTP sent successfully", result);
+    } catch (error) {
+        return handleResponse(res, error.statusCode || 500, error.message);
+    }
+};
+
+export const verifySellerSignupOtp = async (req, res) => {
+    try {
+        const { channel, email, phone, value, otp } = req.body || {};
+        const targetValue =
+            channel === "email"
+                ? email || value
+                : channel === "phone"
+                    ? phone || value
+                    : value;
+
+        const result = await verifySellerOtpCode({
+            channel,
+            rawValue: targetValue,
+            otp,
+            ipAddress: req.ip,
+        });
+
+        return handleResponse(res, 200, "OTP verified successfully", result);
+    } catch (error) {
+        return handleResponse(res, error.statusCode || 500, error.message);
+    }
+};
+
+/* ===============================
+   SELLER LOGIN
+================================ */
+export const loginSeller = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return handleResponse(res, 400, "Email and password are required");
+        }
+
+        // Include password for comparison
+        const seller = await Seller.findOne({ email }).select("+password");
+
+        if (!seller) {
+            return handleResponse(res, 404, "Seller not found");
+        }
+
+        const isMatch = await seller.comparePassword(password);
+
+        if (!isMatch) {
+            return handleResponse(res, 401, "Invalid credentials");
+        }
+
+        const applicationStatus =
+            seller.applicationStatus || (seller.isVerified ? "approved" : "pending");
+        const isApproved =
+            seller.isVerified === true &&
+            seller.isActive === true &&
+            applicationStatus === "approved";
+
+        if (!isApproved) {
+            const approvalMessage =
+                applicationStatus === "rejected"
+                    ? "Your seller application was rejected. Please contact support."
+                    : "Your seller account is pending admin approval.";
+
+            return handleResponse(res, 403, approvalMessage, {
+                applicationStatus,
+                isVerified: seller.isVerified === true,
+                isActive: seller.isActive === true,
+                rejectionReason: seller.rejectionReason || "",
+            });
+        }
+
+        seller.lastLogin = new Date();
+        await seller.save();
+
+        const token = generateToken(seller);
+
+        return handleResponse(res, 200, "Login successful", {
+            token,
+            seller,
+        });
+    } catch (error) {
+        return handleResponse(res, 500, error.message);
+    }
+};
+
+import {
+    issueResetOtp,
+    verifyResetOtp,
+    validateResetToken,
+    clearResetSession
+} from "../services/passwordResetService.js";
+
+/* ===============================
+   FORGOT PASSWORD
+================================ */
+export const forgotPasswordRequest = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return handleResponse(res, 400, "Email is required");
+
+        const seller = await Seller.findOne({ email: email.toLowerCase().trim() });
+        if (!seller) {
+            return handleResponse(res, 404, "Seller account not found with this email");
+        }
+
+        await issueResetOtp(email);
+        return handleResponse(res, 200, "OTP for password reset has been sent to your email");
+    } catch (error) {
+        return handleResponse(res, error.statusCode || 500, error.message);
+    }
+};
+
+export const verifyForgotPasswordOtp = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) return handleResponse(res, 400, "Email and OTP are required");
+
+        const result = await verifyResetOtp(email, otp);
+        return handleResponse(res, 200, "OTP verified successfully", result);
+    } catch (error) {
+        return handleResponse(res, error.statusCode || 400, error.message);
+    }
+};
+
+export const resetPassword = async (req, res) => {
+    try {
+        const { email, resetToken, newPassword } = req.body;
+        if (!email || !resetToken || !newPassword) {
+            return handleResponse(res, 400, "Email, reset token and new password are required");
+        }
+
+        validateResetToken(resetToken, email);
+
+        const seller = await Seller.findOne({ email: email.toLowerCase().trim() });
+        if (!seller) return handleResponse(res, 404, "Seller not found");
+
+        seller.password = newPassword;
+        await seller.save();
+
+        await clearResetSession(email);
+
+        return handleResponse(res, 200, "Password has been reset successfully. You can now login.");
+    } catch (error) {
+        return handleResponse(res, error.statusCode || 400, error.message);
+    }
+};
