@@ -191,6 +191,8 @@ function createApp() {
   return app;
 }
 
+export { createApp };
+
 /**
  * Start HTTP server (API role)
  */
@@ -412,5 +414,8 @@ async function main() {
   }
 }
 
-// Start the application
-main();
+// Start the application (skip the persistent-process bootstrap when running
+// as a Vercel serverless function; api/index.js handles that entry instead)
+if (!process.env.VERCEL) {
+  main();
+}

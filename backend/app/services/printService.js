@@ -1,6 +1,5 @@
 import Seller from "../models/seller.js";
 import { distanceMeters } from "../utils/geoUtils.js";
-import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { uploadToCloudinary } from "./mediaService.js";
 
 export { uploadToCloudinary };
@@ -17,9 +16,13 @@ export function hasConfiguredPrintService(printService) {
 /**
  * Detect page count for a PDF file from a URL.
  * Note: pdfjs-dist needs the legacy build for Node.js if not using standard workers.
+ * Imported lazily so that environments where its native canvas polyfill isn't
+ * traced/available (e.g. serverless) only fail this specific call, not every
+ * module that imports printService.js.
  */
 export async function getPdfPageCount(buffer) {
   try {
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(buffer);
     const loadingTask = pdfjs.getDocument({ data });
     const pdf = await loadingTask.promise;
