@@ -10,20 +10,25 @@ const REDIS_ERROR_LOG_INTERVAL_MS = () =>
 /**
  * When false, no Redis connections are created: shared client is null and Bull
  * queues are no-op stubs (use MongoDB orderAutoCancelJob for timeouts).
- * 
+ *
  * In production mode (NODE_ENV=production), Redis is MANDATORY and this function
- * will throw an error if Redis is not properly configured.
+ * will throw an error if Redis is not properly configured — except on Vercel
+ * (process.env.VERCEL), where the serverless deployment never runs the Bull
+ * queue workers or interval schedulers that Redis backs, so the mandatory
+ * check is skipped there and REDIS_DISABLED/REDIS_ENABLED are honored as-is.
  */
 export function isRedisEnabled() {
   const d = process.env.REDIS_DISABLED;
   const e = process.env.REDIS_ENABLED;
   const isProduction = process.env.NODE_ENV === "production";
+  const isVercel = Boolean(process.env.VERCEL);
+  const enforceProductionRequirement = isProduction && !isVercel;
 
   // Default: disable Redis in Jest to avoid open handles + noisy retries.
   // Opt-in by setting REDIS_ENABLED=true.
   if (process.env.NODE_ENV === "test" && !(e === "true" || e === "1")) return false;
   if (d === "true" || d === "1") {
-    if (isProduction) {
+    if (enforceProductionRequirement) {
       throw new Error(
         "Redis cannot be disabled in production mode (NODE_ENV=production). " +
         "Redis is required for distributed operations, queues, and caching."
@@ -32,7 +37,7 @@ export function isRedisEnabled() {
     return false;
   }
   if (e === "false" || e === "0") {
-    if (isProduction) {
+    if (enforceProductionRequirement) {
       throw new Error(
         "Redis is required in production mode (NODE_ENV=production). " +
         "Set REDIS_ENABLED=true or provide REDIS_URL/REDIS_HOST configuration."
@@ -42,7 +47,7 @@ export function isRedisEnabled() {
   }
 
   // In production, verify Redis configuration is present
-  if (isProduction) {
+  if (enforceProductionRequirement) {
     const hasConfig = !!(
       process.env.REDIS_URL ||
       process.env.REDIS_HOST ||

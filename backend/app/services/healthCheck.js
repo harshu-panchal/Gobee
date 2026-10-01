@@ -172,8 +172,12 @@ async function getReadinessStatus() {
   checks.redis = redisHealth;
   setGauge("dependency_up", redisHealth.status === "UP" ? 1 : 0, { dependency: "redis" });
   
+  // On Vercel, Redis is intentionally disabled (no persistent queue workers
+  // or schedulers run there), so a DISABLED status there is expected, not a
+  // readiness failure.
   const isProduction = process.env.NODE_ENV === 'production';
-  if (isProduction && redisHealth.status !== 'UP') {
+  const isVercel = Boolean(process.env.VERCEL);
+  if (isProduction && !isVercel && redisHealth.status !== 'UP') {
     ready = false;
   }
 

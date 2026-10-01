@@ -167,7 +167,14 @@ export async function sendSmsOtp({ mobile, userType, purpose, ipAddress = "unkno
   const account = await findAccountByUserType(userType, normalizedMobile);
   assertPurposeEligibility({ purpose, account, userType });
 
-  if (process.env.NODE_ENV === "production" && isMockOtpEnabled()) {
+  // Mock OTP is blocked in production everywhere except Vercel, where real SMS
+  // sending isn't wired up for this deployment and USE_MOCK_OTP=true is set
+  // intentionally (see app/config/redis.js for the same Vercel-only pattern).
+  if (
+    process.env.NODE_ENV === "production" &&
+    !process.env.VERCEL &&
+    isMockOtpEnabled()
+  ) {
     const error = new Error("Mock OTP mode cannot be enabled in production");
     error.statusCode = 500;
     throw error;
